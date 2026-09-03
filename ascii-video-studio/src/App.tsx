@@ -5,6 +5,7 @@ import { processImageDataToFrame } from "./engine/processFrame";
 import { renderFrameToCanvas } from "./engine/canvasRenderer";
 import { useASCIIVideo } from "./hooks/useASCIIVideo";
 import type { ASCIIConfig } from "./types/ascii";
+import { downloadCanvasAsPNG } from "./utils/downloadCanvas";
 
 type MediaType = "none" | "image" | "video";
 
@@ -113,6 +114,20 @@ function App() {
         newConfig,
       );
       renderFrameToCanvas(canvasRef.current, frame, newConfig, 8);
+    }
+  }
+
+  function handleDownload() {
+    if (!canvasRef.current) return;
+
+    try {
+      const baseName = mediaName
+        ? mediaName.replace(/\.[^/.]+$/, "") // remove extensão original
+        : "ascii-art";
+
+      downloadCanvasAsPNG(canvasRef.current, `${baseName}-ascii`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao baixar a imagem.");
     }
   }
 
@@ -263,6 +278,25 @@ function App() {
           </button>
         )}
       </div>
+
+      {/* Botão de Download */}
+      {mediaType !== "none" && (
+        <button
+          onClick={handleDownload}
+          style={{
+            padding: "0.5rem 1.5rem",
+            background: "#1976d2",
+            color: "#fff",
+            border: "none",
+            borderRadius: "4px",
+            fontWeight: "bold",
+            cursor: "pointer",
+            marginTop: "0.8rem",
+          }}
+        >
+          Baixar PNG
+        </button>
+      )}
 
       {/* Feedback de Estado */}
       {mediaName && (
