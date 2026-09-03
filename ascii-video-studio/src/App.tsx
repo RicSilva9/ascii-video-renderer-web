@@ -1,67 +1,64 @@
-import { useState, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { DEFAULT_CHARSET } from "./engine/asciiConverter";
-import { loadImageFile } from "./engine/loadImage";
-import { processImageDataToFrame } from "./engine/processFrame";
-import { renderFrameToCanvas } from "./engine/canvasRenderer";
+import { useASCIIVideo } from "./hooks/useASCIIVideo";
 import type { ASCIIConfig } from "./types/ascii";
 
 function App() {
   const [useColor, setUseColor] = useState(true);
   const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [hasVideo, setHasVideo] = useState(false);
+  const [videoName, setVideoName] = useState("");
 
-  // Referência para a tag <canvas> no DOM
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
 
-  // Guarda o último ImageData processado para re-renderizar quando trocar o modo de cor
-  const lastImageDataRef = useRef<ImageData | null>(null);
+  const config: ASCIIConfig = useMemo(
+    () => ({
+      charset: DEFAULT_CHARSET,
+      invertBrightness: false,
+      useColor,
+    }),
+    [useColor],
+  );
 
-  const config: ASCIIConfig = {
-    charset: DEFAULT_CHARSET,
-    invertBrightness: false,
-    useColor,
-  };
+  const { isPlaying, play, pause, toggle } = useASCIIVideo({
+    videoRef,
+    canvasRef,
+    config,
+    maxWidth: 120,
+  });
 
-  function processAndRender(imageData: ImageData, currentConfig: ASCIIConfig) {
-    if (!canvasRef.current) return;
-
-    // 1. Converte ImageData -> ASCIIFrame (com caracteres e cores)
-    const frame = processImageDataToFrame(imageData, currentConfig);
-
-    // 2. Renderiza no Canvas
-    renderFrameToCanvas(canvasRef.current, frame, currentConfig, 10);
+  function clearObjectUrl() {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
   }
 
-  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setIsLoading(true);
+    if (!file.type.startsWith("video/")) {
+      setError("Selecione um arquivo de vídeo válido (ex: MP4, WebM).");
+      return;
+    }
+
     setError("");
+    pause();
+    clearObjectUrl();
 
-    try {
-      const imageData = await loadImageFile(file, 120);
-      lastImageDataRef.current = imageData;
-      processAndRender(imageData, config);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Erro ao processar imagem.",
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }
+    const url = URL.createObjectURL(file);
+    objectUrlRef.current = url;
+    setVideoName(file.name);
+    setHasVideo(true);
 
-  function handleColorToggle() {
-    const newColorState = !useColor;
-    setUseColor(newColorState);
+    const video = videoRef.current;
+    if (!video) return;
 
-    if (lastImageDataRef.current) {
-      processAndRender(lastImageDataRef.current, {
-        ...config,
-        useColor: newColorState,
-      });
-    }
+    video.src = url;
+    video.load();
   }
 
   return (
@@ -75,17 +72,18 @@ function App() {
       }}
     >
       <h1>ASCII Video Studio</h1>
-      <p>Renderização de Imagem em Canvas (ASCII + RGB)</p>
+      <p>Renderização de vídeo em ASCII + RGB no Canvas</p>
 
       <div
         style={{
           display: "flex",
+          flexWrap: "wrap",
           gap: "1rem",
           alignItems: "center",
           marginBottom: "1rem",
         }}
       >
-        <input type="file" accept="image/*" onChange={handleFileChange} />
+        <input type="file" accept="video/*" onChange={handleFileChange} />
 
         <label
           style={{
@@ -98,26 +96,49 @@ function App() {
           <input
             type="checkbox"
             checked={useColor}
-            onChange={handleColorToggle}
+            onChange={() => setUseColor((prev) => !prev)}
           />
           Ativar Cores RGB
         </label>
+
+        <button onClick={toggle} disabled={!hasVideo}>
+          {isPlaying ? "Pause" : "Play"}
+        </button>
       </div>
 
-      {isLoading && <p>Processando imagem...</p>}
+      {videoName && (
+        <p style={{ opacity: 0.7, marginBottom: "1rem" }}>
+          Arquivo: {videoName}
+        </p>
+      )}
+
       {error && <p style={{ color: "#f66" }}>{error}</p>}
 
+      {/* Vídeo oculto: ele só alimenta frames + áudio */}
+      <video
+        ref={videoRef}
+        style={{ display: "none" }}
+        playsInline
+        preload="auto"
+      />
+
       <div style={{ marginTop: "1rem", overflow: "auto" }}>
-        {/* Nosso Canvas de Renderização */}
         <canvas
           ref={canvasRef}
           style={{
             background: "#000",
             borderRadius: "4px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.5)",
+            maxWidth: "100%",
           }}
         />
       </div>
+
+      {!hasVideo && (
+        <p style={{ opacity: 0.6, marginTop: "1rem" }}>
+          Selecione um vídeo MP4/WebM para começar.
+        </p>
+      )}
     </div>
   );
 }
