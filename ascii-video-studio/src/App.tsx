@@ -4,8 +4,9 @@ import { loadImageFile } from "./engine/loadImage";
 import { processImageDataToFrame } from "./engine/processFrame";
 import { renderFrameToCanvas } from "./engine/canvasRenderer";
 import { useASCIIVideo } from "./hooks/useASCIIVideo";
-import type { ASCIIConfig } from "./types/ascii";
+import { useASCIIRecorder } from "./hooks/useASCIIRecorder";
 import { downloadCanvasAsPNG } from "./utils/downloadCanvas";
+import type { ASCIIConfig } from "./types/ascii";
 
 type MediaType = "none" | "image" | "video";
 
@@ -38,16 +39,28 @@ function App() {
     [useColor, selectedCharset],
   );
 
-  // Hook de Vídeo
-  const { isPlaying, toggle, pause } = useASCIIVideo({
+  // Hook de Reprodução de Vídeo
+  const { isPlaying, toggle, pause, play } = useASCIIVideo({
     videoRef,
     canvasRef,
     config,
     maxWidth: columns,
   });
 
+  // Hook de Gravação de Vídeo WebM
+  const { isRecording, startRecording, stopRecording } = useASCIIRecorder({
+    canvasRef,
+    videoRef,
+    filename: mediaName
+      ? `${mediaName.replace(/\.[^/.]+$/, "")}-ascii`
+      : "ascii-video",
+  });
+
+  // Função utilitária para limpar a memória
   function clearResources() {
     pause();
+    if (isRecording) stopRecording();
+
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
@@ -75,7 +88,7 @@ function App() {
     }
   }
 
-  // Handler de Seleção de Arquivo Unificado
+  // Handler de Seleção de Arquivo
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -117,14 +130,13 @@ function App() {
     }
   }
 
-  function handleDownload() {
+  // Handler de Download de Imagem (PNG)
+  function handleDownloadPNG() {
     if (!canvasRef.current) return;
-
     try {
       const baseName = mediaName
-        ? mediaName.replace(/\.[^/.]+$/, "") // remove extensão original
+        ? mediaName.replace(/\.[^/.]+$/, "")
         : "ascii-art";
-
       downloadCanvasAsPNG(canvasRef.current, `${baseName}-ascii`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao baixar a imagem.");
@@ -146,7 +158,7 @@ function App() {
         Transforme Imagens e Vídeos em ASCII Art em tempo real
       </p>
 
-      {/* Painel de Controle Simples */}
+      {/* Painel de Controle Principal */}
       <div
         style={{
           display: "flex",
@@ -188,7 +200,6 @@ function App() {
           >
             Resolução: {columns} colunas
           </label>
-
           <input
             type="range"
             min="40"
@@ -258,50 +269,100 @@ function App() {
           />
           Cores RGB
         </label>
+      </div>
 
-        {/* Botão Play/Pause (só para vídeo) */}
-        {mediaType === "video" && (
+      {/* Painel de Ações e Exportação (Só aparece se tiver mídia) */}
+      {mediaType !== "none" && (
+        <div
+          style={{
+            display: "flex",
+            gap: "1rem",
+            marginBottom: "1rem",
+            flexWrap: "wrap",
+          }}
+        >
+          {/* Ações exclusivas de VÍDEO */}
+          {mediaType === "video" && (
+            <>
+              <button
+                onClick={toggle}
+                style={{
+                  padding: "0.5rem 1.5rem",
+                  background: isPlaying ? "#e53935" : "#4caf50",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "4px",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                }}
+              >
+                {isPlaying ? "Pause" : "Play"}
+              </button>
+
+              {!isRecording ? (
+                <button
+                  onClick={() => {
+                    if (!isPlaying) play(); // Inicia o vídeo se estiver pausado
+                    startRecording();
+                  }}
+                  style={{
+                    padding: "0.5rem 1.5rem",
+                    background: "#ff9800",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "4px",
+                    fontWeight: "bold",
+                    cursor: "pointer",
+                  }}
+                >
+                  🔴 Gravar Vídeo (.webm)
+                </button>
+              ) : (
+                <button
+                  onClick={stopRecording}
+                  style={{
+                    padding: "0.5rem 1.5rem",
+                    background: "#d32f2f",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "4px",
+                    fontWeight: "bold",
+                    cursor: "pointer",
+                  }}
+                >
+                  ⏹️ Parar Gravação
+                </button>
+              )}
+            </>
+          )}
+
+          {/* Exportação de PNG (Funciona para Imagem e Vídeo pausado/rodando) */}
           <button
-            onClick={toggle}
+            onClick={handleDownloadPNG}
             style={{
               padding: "0.5rem 1.5rem",
-              background: isPlaying ? "#e53935" : "#4caf50",
+              background: "#1976d2",
               color: "#fff",
               border: "none",
               borderRadius: "4px",
               fontWeight: "bold",
               cursor: "pointer",
-              marginTop: "0.8rem",
             }}
           >
-            {isPlaying ? "Pause" : "Play"}
+            📸 Baixar Frame (.png)
           </button>
-        )}
-      </div>
-
-      {/* Botão de Download */}
-      {mediaType !== "none" && (
-        <button
-          onClick={handleDownload}
-          style={{
-            padding: "0.5rem 1.5rem",
-            background: "#1976d2",
-            color: "#fff",
-            border: "none",
-            borderRadius: "4px",
-            fontWeight: "bold",
-            cursor: "pointer",
-            marginTop: "0.8rem",
-          }}
-        >
-          Baixar PNG
-        </button>
+        </div>
       )}
 
       {/* Feedback de Estado */}
       {mediaName && (
         <p style={{ opacity: 0.7, fontSize: "0.9rem" }}>
           Arquivo: {mediaName} ({mediaType.toUpperCase()})
+          {isRecording && (
+            <strong style={{ color: "#f44336", marginLeft: "10px" }}>
+              GRAVANDO...
+            </strong>
+          )}
         </p>
       )}
       {isLoading && <p>Carregando e processando mídia...</p>}
@@ -327,12 +388,6 @@ function App() {
           }}
         />
       </div>
-
-      {mediaType === "none" && (
-        <p style={{ opacity: 0.5, marginTop: "2rem" }}>
-          Escolha uma foto ou um vídeo para começar o teste!
-        </p>
-      )}
     </div>
   );
 }
