@@ -39,8 +39,8 @@ function App() {
     [useColor, selectedCharset],
   );
 
-  // Hook de Reprodução de Vídeo
-  const { isPlaying, toggle, pause, play } = useASCIIVideo({
+  // Hook de Reprodução de Vídeo (com métricas)
+  const { isPlaying, toggle, pause, play, fps, frameTimeMs } = useASCIIVideo({
     videoRef,
     canvasRef,
     config,
@@ -56,7 +56,6 @@ function App() {
       : "ascii-video",
   });
 
-  // Função utilitária para limpar a memória
   function clearResources() {
     pause();
     if (isRecording) stopRecording();
@@ -65,10 +64,10 @@ function App() {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+
     lastImageDataRef.current = null;
   }
 
-  // Processa Imagem Estática
   async function processImage(file: File) {
     setIsLoading(true);
     try {
@@ -88,7 +87,6 @@ function App() {
     }
   }
 
-  // Handler de Seleção de Arquivo
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -115,28 +113,33 @@ function App() {
     }
   }
 
-  // Re-renderiza Imagem ao mudar controles (se for imagem estática)
   function reRenderImageIfNeeded(newColumns = columns, newConfig = config) {
     if (
       mediaType === "image" &&
       lastImageDataRef.current &&
       canvasRef.current
     ) {
+      // Observação: para mudança de colunas em imagem, o ideal é recarregar o arquivo.
+      // Aqui reprocessamos o ImageData já amostrado (mesma resolução de sample).
       const frame = processImageDataToFrame(
         lastImageDataRef.current,
         newConfig,
       );
       renderFrameToCanvas(canvasRef.current, frame, newConfig, 8);
     }
+
+    // Silencia warning de parâmetro não usado em alguns lints
+    void newColumns;
   }
 
-  // Handler de Download de Imagem (PNG)
   function handleDownloadPNG() {
     if (!canvasRef.current) return;
+
     try {
       const baseName = mediaName
         ? mediaName.replace(/\.[^/.]+$/, "")
         : "ascii-art";
+
       downloadCanvasAsPNG(canvasRef.current, `${baseName}-ascii`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao baixar a imagem.");
@@ -153,7 +156,7 @@ function App() {
         fontFamily: "sans-serif",
       }}
     >
-      <h1>ASCII Video Studio</h1>
+      <h1 style={{ marginTop: 0 }}>ASCII Video Studio</h1>
       <p style={{ opacity: 0.8 }}>
         Transforme Imagens e Vídeos em ASCII Art em tempo real
       </p>
@@ -271,7 +274,7 @@ function App() {
         </label>
       </div>
 
-      {/* Painel de Ações e Exportação (Só aparece se tiver mídia) */}
+      {/* Painel de Ações e Exportação */}
       {mediaType !== "none" && (
         <div
           style={{
@@ -281,7 +284,6 @@ function App() {
             flexWrap: "wrap",
           }}
         >
-          {/* Ações exclusivas de VÍDEO */}
           {mediaType === "video" && (
             <>
               <button
@@ -302,7 +304,7 @@ function App() {
               {!isRecording ? (
                 <button
                   onClick={() => {
-                    if (!isPlaying) play(); // Inicia o vídeo se estiver pausado
+                    if (!isPlaying) play();
                     startRecording();
                   }}
                   style={{
@@ -336,7 +338,6 @@ function App() {
             </>
           )}
 
-          {/* Exportação de PNG (Funciona para Imagem e Vídeo pausado/rodando) */}
           <button
             onClick={handleDownloadPNG}
             style={{
@@ -365,6 +366,28 @@ function App() {
           )}
         </p>
       )}
+
+      {/* Badge de Métricas de Performance */}
+      {mediaType === "video" && isPlaying && (
+        <div
+          style={{
+            display: "inline-flex",
+            gap: "1rem",
+            background: "#1a237e",
+            color: "#82b1ff",
+            padding: "0.4rem 0.8rem",
+            borderRadius: "4px",
+            fontSize: "0.85rem",
+            fontWeight: "bold",
+            marginBottom: "1rem",
+            fontFamily: "monospace",
+          }}
+        >
+          <span>⚡ FPS: {fps}</span>
+          <span>⏱️ Frame Time: {frameTimeMs} ms</span>
+        </div>
+      )}
+
       {isLoading && <p>Carregando e processando mídia...</p>}
       {error && <p style={{ color: "#f66" }}>{error}</p>}
 

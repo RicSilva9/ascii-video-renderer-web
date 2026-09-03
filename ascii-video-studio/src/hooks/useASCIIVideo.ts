@@ -7,34 +7,36 @@ interface UseASCIIVideoParams {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   config: ASCIIConfig;
-  /** Largura máxima em colunas ASCII */
   maxWidth?: number;
-  /** Correção de aspect ratio dos caracteres monoespaçados */
   aspectCorrection?: number;
 }
 
-interface UseASCIIVideoReturn {
-  isPlaying: boolean;
-  play: () => void;
-  pause: () => void;
-  toggle: () => void;
-}
-
-/**
- * Lê frames de um <video>, converte para ASCII e renderiza num <canvas>
- * em sincronia com requestAnimationFrame.
- */
 export function useASCIIVideo({
   videoRef,
   canvasRef,
   config,
   maxWidth = 120,
   aspectCorrection = 0.55,
-}: UseASCIIVideoParams): UseASCIIVideoReturn {
+}: UseASCIIVideoParams) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const rafIdRef = useRef<number | null>(null);
 
-  // Refs para valores que mudam sem precisar recriar o loop
+  // Métricas de Performance
+  const [fps, setFps] = useState(0);
+  const [frameTimeMs, setFrameTimeMs] = useState(0);
+
+  // Refs de controle de loop
+  const rafIdRef = useRef<number | null>(null);
+  const lastProcessedTimeRef = useRef<number>(-1);
+
+  // Refs para cálculo de FPS
+  const frameCountRef = useRef(0);
+  const lastFpsUpdateRef = useRef(performance.now());
+
+  // Refs de reciclagem de Canvas Offscreen
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const offscreenCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+
+  // Refs de parâmetros reativos
   const configRef = useRef(config);
   const maxWidthRef = useRef(maxWidth);
   const aspectCorrectionRef = useRef(aspectCorrection);
@@ -42,14 +44,29 @@ export function useASCIIVideo({
   useEffect(() => {
     configRef.current = config;
   }, [config]);
-
   useEffect(() => {
     maxWidthRef.current = maxWidth;
   }, [maxWidth]);
-
   useEffect(() => {
     aspectCorrectionRef.current = aspectCorrection;
   }, [aspectCorrection]);
+
+  const getOffscreenContext = useCallback((width: number, height: number) => {
+    if (!offscreenCanvasRef.current) {
+      offscreenCanvasRef.current = document.createElement("canvas");
+      offscreenCtxRef.current = offscreenCanvasRef.current.getContext("2d", {
+        willReadFrequently: true,
+      });
+    }
+
+    const canvas = offscreenCanvasRef.current;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    return offscreenCtxRef.current;
+  }, []);
 
   const renderFrame = useCallback(() => {
     const video = videoRef.current;
@@ -61,7 +78,16 @@ export function useASCIIVideo({
       return;
     }
 
-    // Canvas offscreen só para extrair pixels do frame atual
+    // Deduplicação de quadros (Frame Skipping)
+    if (video.currentTime === lastProcessedTimeRef.current) {
+      rafIdRef.current = requestAnimationFrame(renderFrame);
+      return;
+    }
+    lastProcessedTimeRef.current = video.currentTime;
+
+    // Cronômetro do Frame (Início)
+    const startTime = performance.now();
+
     const sampleWidth = maxWidthRef.current;
     const sampleHeight = Math.max(
       1,
@@ -72,27 +98,35 @@ export function useASCIIVideo({
       ),
     );
 
-    const sampleCanvas = document.createElement("canvas");
-    sampleCanvas.width = sampleWidth;
-    sampleCanvas.height = sampleHeight;
+    const sampleCtx = getOffscreenContext(sampleWidth, sampleHeight);
 
-    const sampleCtx = sampleCanvas.getContext("2d", {
-      willReadFrequently: true, // dica de performance pro browser
-    });
+    if (sampleCtx) {
+      sampleCtx.drawImage(video, 0, 0, sampleWidth, sampleHeight);
+      const imageData = sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight);
 
-    if (!sampleCtx) {
-      rafIdRef.current = requestAnimationFrame(renderFrame);
-      return;
+      const frame = processImageDataToFrame(imageData, configRef.current);
+      renderFrameToCanvas(canvas, frame, configRef.current, 8);
     }
 
-    sampleCtx.drawImage(video, 0, 0, sampleWidth, sampleHeight);
-    const imageData = sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight);
+    // Cronômetro do Frame (Fim)
+    const duration = performance.now() - startTime;
 
-    const frame = processImageDataToFrame(imageData, configRef.current);
-    renderFrameToCanvas(canvas, frame, configRef.current, 8);
+    // Atualiza contadores de FPS a cada 500ms para a UI não piscar demais
+    frameCountRef.current += 1;
+    const now = performance.now();
+    const elapsed = now - lastFpsUpdateRef.current;
+
+    if (elapsed >= 500) {
+      const currentFps = Math.round((frameCountRef.current * 1000) / elapsed);
+      setFps(currentFps);
+      setFrameTimeMs(Number(duration.toFixed(1)));
+
+      frameCountRef.current = 0;
+      lastFpsUpdateRef.current = now;
+    }
 
     rafIdRef.current = requestAnimationFrame(renderFrame);
-  }, [videoRef, canvasRef]);
+  }, [videoRef, canvasRef, getOffscreenContext]);
 
   const stopLoop = useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -110,11 +144,12 @@ export function useASCIIVideo({
       .then(() => {
         setIsPlaying(true);
         stopLoop();
+        lastProcessedTimeRef.current = -1;
+        lastFpsUpdateRef.current = performance.now();
+        frameCountRef.current = 0;
         rafIdRef.current = requestAnimationFrame(renderFrame);
       })
-      .catch(() => {
-        setIsPlaying(false);
-      });
+      .catch(console.error);
   }, [videoRef, renderFrame, stopLoop]);
 
   const pause = useCallback(() => {
@@ -127,19 +162,13 @@ export function useASCIIVideo({
   }, [videoRef, stopLoop]);
 
   const toggle = useCallback(() => {
-    if (isPlaying) {
-      pause();
-    } else {
-      play();
-    }
+    if (isPlaying) pause();
+    else play();
   }, [isPlaying, play, pause]);
 
-  // Cleanup obrigatório (StrictMode e unmount)
   useEffect(() => {
-    return () => {
-      stopLoop();
-    };
+    return () => stopLoop();
   }, [stopLoop]);
 
-  return { isPlaying, play, pause, toggle };
+  return { isPlaying, play, pause, toggle, fps, frameTimeMs };
 }
