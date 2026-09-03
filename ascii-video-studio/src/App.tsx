@@ -1,18 +1,36 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { DEFAULT_CHARSET } from "./engine/asciiConverter";
-import { imageDataToASCII } from "./engine/imageToASCII";
 import { loadImageFile } from "./engine/loadImage";
+import { processImageDataToFrame } from "./engine/processFrame";
+import { renderFrameToCanvas } from "./engine/canvasRenderer";
 import type { ASCIIConfig } from "./types/ascii";
 
 function App() {
-  const [asciiArt, setAsciiArt] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [useColor, setUseColor] = useState(true);
+  const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Referência para a tag <canvas> no DOM
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Guarda o último ImageData processado para re-renderizar quando trocar o modo de cor
+  const lastImageDataRef = useRef<ImageData | null>(null);
 
   const config: ASCIIConfig = {
     charset: DEFAULT_CHARSET,
     invertBrightness: false,
+    useColor,
   };
+
+  function processAndRender(imageData: ImageData, currentConfig: ASCIIConfig) {
+    if (!canvasRef.current) return;
+
+    // 1. Converte ImageData -> ASCIIFrame (com caracteres e cores)
+    const frame = processImageDataToFrame(imageData, currentConfig);
+
+    // 2. Renderiza no Canvas
+    renderFrameToCanvas(canvasRef.current, frame, currentConfig, 10);
+  }
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -20,17 +38,29 @@ function App() {
 
     setIsLoading(true);
     setError("");
-    setAsciiArt("");
 
     try {
-      // 120 colunas de ASCII — bom equilíbrio entre detalhe e performance
       const imageData = await loadImageFile(file, 120);
-      const result = imageDataToASCII(imageData, config);
-      setAsciiArt(result);
+      lastImageDataRef.current = imageData;
+      processAndRender(imageData, config);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro desconhecido");
+      setError(
+        err instanceof Error ? err.message : "Erro ao processar imagem.",
+      );
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  function handleColorToggle() {
+    const newColorState = !useColor;
+    setUseColor(newColorState);
+
+    if (lastImageDataRef.current) {
+      processAndRender(lastImageDataRef.current, {
+        ...config,
+        useColor: newColorState,
+      });
     }
   }
 
@@ -41,37 +71,53 @@ function App() {
         color: "#eee",
         minHeight: "100vh",
         padding: "2rem",
-        fontFamily: "monospace",
+        fontFamily: "sans-serif",
       }}
     >
       <h1>ASCII Video Studio</h1>
-      <p>Selecione uma imagem para converter em ASCII Art</p>
+      <p>Renderização de Imagem em Canvas (ASCII + RGB)</p>
 
-      <input
-        type="file"
-        accept="image/*"
-        onChange={handleFileChange}
-        style={{ margin: "1rem 0" }}
-      />
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          alignItems: "center",
+          marginBottom: "1rem",
+        }}
+      >
+        <input type="file" accept="image/*" onChange={handleFileChange} />
 
-      {isLoading && <p>Processando...</p>}
-      {error && <p style={{ color: "#f66" }}>{error}</p>}
-
-      {asciiArt && (
-        <pre
+        <label
           style={{
-            fontSize: "6px",
-            lineHeight: "1",
-            letterSpacing: "0",
-            overflow: "auto",
-            background: "#000",
-            padding: "1rem",
-            borderRadius: "4px",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            cursor: "pointer",
           }}
         >
-          {asciiArt}
-        </pre>
-      )}
+          <input
+            type="checkbox"
+            checked={useColor}
+            onChange={handleColorToggle}
+          />
+          Ativar Cores RGB
+        </label>
+      </div>
+
+      {isLoading && <p>Processando imagem...</p>}
+      {error && <p style={{ color: "#f66" }}>{error}</p>}
+
+      <div style={{ marginTop: "1rem", overflow: "auto" }}>
+        {/* Nosso Canvas de Renderização */}
+        <canvas
+          ref={canvasRef}
+          style={{
+            background: "#000",
+            borderRadius: "4px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+          }}
+        />
+      </div>
     </div>
   );
 }

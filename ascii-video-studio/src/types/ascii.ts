@@ -17,4 +17,26 @@ export interface ASCIIConfig {
   charset: string;
   /** Se true, inverte a escala (para fundo escuro) */
   invertBrightness: boolean;
+  /** Se true, renderiza com as cores RGB originais */
+  useColor: boolean;
+}
+
+/**
+ * Representa uma "célula" do resultado ASCII,
+ * contendo o caractere e a cor do pixel original.
+ */
+export interface ASCIICell {
+  char: string;
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * O resultado do processamento de um frame inteiro.
+ */
+export interface ASCIIFrame {
+  cells: ASCIICell[];
+  width: number; // número de colunas
+  height: number; // número de linhas
 }
