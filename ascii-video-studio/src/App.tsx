@@ -1,64 +1,119 @@
 import { useMemo, useRef, useState } from "react";
-import { DEFAULT_CHARSET } from "./engine/asciiConverter";
+import { CHARSETS, type CharsetName } from "./engine/asciiConverter";
+import { loadImageFile } from "./engine/loadImage";
+import { processImageDataToFrame } from "./engine/processFrame";
+import { renderFrameToCanvas } from "./engine/canvasRenderer";
 import { useASCIIVideo } from "./hooks/useASCIIVideo";
 import type { ASCIIConfig } from "./types/ascii";
 
-function App() {
-  const [useColor, setUseColor] = useState(true);
-  const [error, setError] = useState("");
-  const [hasVideo, setHasVideo] = useState(false);
-  const [videoName, setVideoName] = useState("");
+type MediaType = "none" | "image" | "video";
 
+function App() {
+  // Estados de Configuração
+  const [useColor, setUseColor] = useState(true);
+  const [columns, setColumns] = useState(120);
+  const [selectedCharset, setSelectedCharset] =
+    useState<CharsetName>("standard");
+
+  // Estados de Mídia e UI
+  const [mediaType, setMediaType] = useState<MediaType>("none");
+  const [mediaName, setMediaName] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const lastImageDataRef = useRef<ImageData | null>(null);
 
+  // Configuração Reativa
   const config: ASCIIConfig = useMemo(
     () => ({
-      charset: DEFAULT_CHARSET,
+      charset: CHARSETS[selectedCharset],
       invertBrightness: false,
       useColor,
     }),
-    [useColor],
+    [useColor, selectedCharset],
   );
 
-  const { isPlaying, play, pause, toggle } = useASCIIVideo({
+  // Hook de Vídeo
+  const { isPlaying, toggle, pause } = useASCIIVideo({
     videoRef,
     canvasRef,
     config,
-    maxWidth: 120,
+    maxWidth: columns,
   });
 
-  function clearObjectUrl() {
+  function clearResources() {
+    pause();
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    lastImageDataRef.current = null;
   }
 
+  // Processa Imagem Estática
+  async function processImage(file: File) {
+    setIsLoading(true);
+    try {
+      const imageData = await loadImageFile(file, columns);
+      lastImageDataRef.current = imageData;
+
+      if (canvasRef.current) {
+        const frame = processImageDataToFrame(imageData, config);
+        renderFrameToCanvas(canvasRef.current, frame, config, 8);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao processar imagem.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Handler de Seleção de Arquivo Unificado
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("video/")) {
-      setError("Selecione um arquivo de vídeo válido (ex: MP4, WebM).");
-      return;
-    }
-
     setError("");
-    pause();
-    clearObjectUrl();
+    clearResources();
+    setMediaName(file.name);
 
-    const url = URL.createObjectURL(file);
-    objectUrlRef.current = url;
-    setVideoName(file.name);
-    setHasVideo(true);
+    if (file.type.startsWith("image/")) {
+      setMediaType("image");
+      processImage(file);
+    } else if (file.type.startsWith("video/")) {
+      setMediaType("video");
+      const url = URL.createObjectURL(file);
+      objectUrlRef.current = url;
 
-    const video = videoRef.current;
-    if (!video) return;
+      if (videoRef.current) {
+        videoRef.current.src = url;
+        videoRef.current.load();
+      }
+    } else {
+      setMediaType("none");
+      setError("Formato não suportado. Por favor, envie uma Imagem ou Vídeo.");
+    }
+  }
 
-    video.src = url;
-    video.load();
+  // Re-renderiza Imagem ao mudar controles (se for imagem estática)
+  function reRenderImageIfNeeded(newColumns = columns, newConfig = config) {
+    if (
+      mediaType === "image" &&
+      lastImageDataRef.current &&
+      canvasRef.current
+    ) {
+      const frame = processImageDataToFrame(
+        lastImageDataRef.current,
+        newConfig,
+      );
+      renderFrameToCanvas(canvasRef.current, frame, newConfig, 8);
+    }
   }
 
   return (
@@ -72,49 +127,153 @@ function App() {
       }}
     >
       <h1>ASCII Video Studio</h1>
-      <p>Renderização de vídeo em ASCII + RGB no Canvas</p>
+      <p style={{ opacity: 0.8 }}>
+        Transforme Imagens e Vídeos em ASCII Art em tempo real
+      </p>
 
+      {/* Painel de Controle Simples */}
       <div
         style={{
           display: "flex",
           flexWrap: "wrap",
-          gap: "1rem",
+          gap: "1.5rem",
           alignItems: "center",
+          background: "#222",
+          padding: "1rem",
+          borderRadius: "8px",
           marginBottom: "1rem",
         }}
       >
-        <input type="file" accept="video/*" onChange={handleFileChange} />
+        {/* Upload */}
+        <div>
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.8rem",
+              marginBottom: "0.2rem",
+            }}
+          >
+            Arquivo (Imagem ou Vídeo)
+          </label>
+          <input
+            type="file"
+            accept="image/*,video/*"
+            onChange={handleFileChange}
+          />
+        </div>
 
+        {/* Resolução */}
+        <div>
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.8rem",
+              marginBottom: "0.2rem",
+            }}
+          >
+            Resolução: {columns} colunas
+          </label>
+
+          <input
+            type="range"
+            min="40"
+            max="200"
+            step="10"
+            value={columns}
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              setColumns(val);
+              reRenderImageIfNeeded(val, config);
+            }}
+          />
+        </div>
+
+        {/* Charset */}
+        <div>
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.8rem",
+              marginBottom: "0.2rem",
+            }}
+          >
+            Estilo do Charset
+          </label>
+          <select
+            value={selectedCharset}
+            onChange={(e) => {
+              const val = e.target.value as CharsetName;
+              setSelectedCharset(val);
+              const newConfig = { ...config, charset: CHARSETS[val] };
+              reRenderImageIfNeeded(columns, newConfig);
+            }}
+            style={{
+              padding: "0.3rem",
+              background: "#333",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+            }}
+          >
+            <option value="standard">Padrão (10 níveis)</option>
+            <option value="detailed">Detalhado (70 níveis)</option>
+            <option value="blocks">Blocos Retro</option>
+            <option value="minimal">Minimalista</option>
+          </select>
+        </div>
+
+        {/* Toggle RGB */}
         <label
           style={{
             display: "flex",
             alignItems: "center",
             gap: "0.5rem",
             cursor: "pointer",
+            marginTop: "1rem",
           }}
         >
           <input
             type="checkbox"
             checked={useColor}
-            onChange={() => setUseColor((prev) => !prev)}
+            onChange={() => {
+              const newColor = !useColor;
+              setUseColor(newColor);
+              reRenderImageIfNeeded(columns, { ...config, useColor: newColor });
+            }}
           />
-          Ativar Cores RGB
+          Cores RGB
         </label>
 
-        <button onClick={toggle} disabled={!hasVideo}>
-          {isPlaying ? "Pause" : "Play"}
-        </button>
+        {/* Botão Play/Pause (só para vídeo) */}
+        {mediaType === "video" && (
+          <button
+            onClick={toggle}
+            style={{
+              padding: "0.5rem 1.5rem",
+              background: isPlaying ? "#e53935" : "#4caf50",
+              color: "#fff",
+              border: "none",
+              borderRadius: "4px",
+              fontWeight: "bold",
+              cursor: "pointer",
+              marginTop: "0.8rem",
+            }}
+          >
+            {isPlaying ? "Pause" : "Play"}
+          </button>
+        )}
       </div>
 
-      {videoName && (
-        <p style={{ opacity: 0.7, marginBottom: "1rem" }}>
-          Arquivo: {videoName}
+      {/* Feedback de Estado */}
+      {mediaName && (
+        <p style={{ opacity: 0.7, fontSize: "0.9rem" }}>
+          Arquivo: {mediaName} ({mediaType.toUpperCase()})
         </p>
       )}
-
+      {isLoading && <p>Carregando e processando mídia...</p>}
       {error && <p style={{ color: "#f66" }}>{error}</p>}
 
-      {/* Vídeo oculto: ele só alimenta frames + áudio */}
+      {/* Tag de vídeo escondida */}
       <video
         ref={videoRef}
         style={{ display: "none" }}
@@ -122,6 +281,7 @@ function App() {
         preload="auto"
       />
 
+      {/* Canvas Principal */}
       <div style={{ marginTop: "1rem", overflow: "auto" }}>
         <canvas
           ref={canvasRef}
@@ -134,9 +294,9 @@ function App() {
         />
       </div>
 
-      {!hasVideo && (
-        <p style={{ opacity: 0.6, marginTop: "1rem" }}>
-          Selecione um vídeo MP4/WebM para começar.
+      {mediaType === "none" && (
+        <p style={{ opacity: 0.5, marginTop: "2rem" }}>
+          Escolha uma foto ou um vídeo para começar o teste!
         </p>
       )}
     </div>
